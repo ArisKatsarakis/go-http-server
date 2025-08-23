@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"strings"
 )
 
 type parseState string
 
 const (
-	ParseInit parseState = "init"
-	ParseDone parseState = "done"
+	ParseInit  parseState = "init"
+	ParseDone  parseState = "done"
+	ParseError parseState = "error"
 )
 
 type RequestLine struct {
@@ -31,7 +31,25 @@ outer:
 	for {
 
 		switch r.ParseState {
+		case ParseError:
+			return 0, fmt.Errorf("Error at request parsing")
 		case ParseInit:
+			rl, n, err := parseRequestLine(b[read:])
+
+			if err != nil {
+				r.ParseState = ParseError
+				return 0, err
+			}
+
+			if n == 0 {
+				break outer
+			}
+
+			r.RequestLine = *rl
+			read += n
+
+			r.ParseState = ParseDone
+
 		case ParseDone:
 			break outer
 		}
@@ -40,8 +58,9 @@ outer:
 }
 
 func (r *Request) done() bool {
-	return r.ParseState == ParseDone
+	return r.ParseState == ParseDone || r.ParseState == ParseError
 }
+
 func newRequest() *Request {
 	return &Request{
 		ParseState: ParseInit,
@@ -60,6 +79,7 @@ func parseRequestLine(b []byte) (*RequestLine, int, error) {
 	starLine := b[:idx]
 	read := idx + len(SEPERATOR)
 	parts := bytes.Split(starLine, []byte(" "))
+
 	if len(parts) != 3 {
 		return nil, read, ERR_BAD_REQUEST
 	}
@@ -79,6 +99,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	bufIdx := 0
 	for !request.done() {
 		n, err := reader.Read(buf[bufIdx:])
+
 		if err != nil {
 			return nil, err
 		}
@@ -93,18 +114,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		bufIdx -= readN
 
 	}
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
 
-	str := string(data)
-	rl, str, err := parseRequestLine(str)
-	if err != nil {
-		return nil, err
-	}
-	r := &Request{
-		RequestLine: *rl,
-	}
-	return r, nil
+	return request, nil
 }
